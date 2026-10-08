@@ -1,0 +1,14 @@
+# SwiftPM
+.build/
+.swiftpm/
+
+# Packaging output
+dist/
+
+# Xcode, if someone opens the package there
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
