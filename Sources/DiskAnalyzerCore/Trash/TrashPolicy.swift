@@ -183,8 +183,8 @@ public enum TrashOperation {
     /// Items the scan could not measure are refused before the disk is even checked.
     public static func run(_ items: [Collector.Item], policy: TrashPolicy, mover: some TrashMover) -> [TrashOutcome] {
         items.map { item in
-            if !item.isTrashable {
-                return TrashOutcome(path: item.path, status: .refused(.notMeasured))
+            if let limitation = item.limitation {
+                return TrashOutcome(path: item.path, status: .refused(limitation == .changedSinceScan ? .replaced : .notMeasured))
             }
             if let refusal = policy.validate(path: item.path, expectedDirectory: item.isDirectory, expectedIdentity: item.identity) {
                 return TrashOutcome(path: item.path, status: .refused(refusal))

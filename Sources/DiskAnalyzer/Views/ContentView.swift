@@ -21,6 +21,7 @@ struct ContentView: View {
         }
         .quickLookPreview($model.quickLookURL)
         .sheet(isPresented: $model.isIssuesPresented) { IssuesView(model: model) }
+        .sheet(isPresented: $model.isReconciliationPresented) { ReconciliationView(model: model) }
         .confirmationDialog(trashTitle, isPresented: $model.isTrashConfirmationPresented, titleVisibility: .visible) {
             Button("Move to Trash", role: .destructive) { model.performTrash() }
             Button("Cancel", role: .cancel) {}
@@ -57,6 +58,11 @@ struct ContentView: View {
         let unmeasured = model.collector.unmeasuredFolders
         if unmeasured > 0 {
             text += " \(unmeasured) \(unmeasured == 1 ? "folder" : "folders") inside could not be measured, so more than the size shown will move."
+        }
+        if let restored = model.context?.restoredAt {
+            text += " These results were restored from a scan saved \(restored.formatted(date: .abbreviated, time: .shortened)); sizes may have changed since. Rescan for current sizes."
+        } else if model.scanLabels.contains(where: { if case .stale = $0 { true } else if case .changedSinceScan = $0 { true } else { false } }) {
+            text += " The volume changed since the scan, so sizes may differ now."
         }
         return text
     }
@@ -112,9 +118,13 @@ private struct MainToolbar: ToolbarContent {
             if model.isScanning {
                 Button("Stop", systemImage: "stop.circle") { model.cancelScan() }
             } else {
-                Button("Rescan", systemImage: "arrow.clockwise") { model.rescan() }
+                Button("Rescan All", systemImage: "arrow.clockwise") { model.rescan() }
                     .disabled(model.scanRoot == nil)
+                    .help("Scan the whole root again (⌘R)")
             }
+            Button("Space", systemImage: "chart.bar.doc.horizontal") { model.showReconciliation() }
+                .disabled(model.reconciliation == nil)
+                .help("Space Reconciliation: what the scan measured against the volume's used space (⌥⌘S)")
             Button("Collector", systemImage: model.collector.isEmpty ? "tray" : "tray.full") {
                 model.isCollectorPresented.toggle()
             }
@@ -142,7 +152,9 @@ struct BrowserView: View {
                         .padding(6)
                         .background(.background)
                 }
-            case .largest:
+            case .folders:
+                LargestFoldersView(model: model)
+            case .files:
                 LargestItemsView(model: model)
             }
             Divider()
@@ -257,6 +269,10 @@ struct StatusBar: View {
                     Label("\(SizeFormatting.count(Int64(count))) \(count == 1 ? "folder" : "folders") counted at another path", systemImage: "arrow.triangle.branch")
                         .help("Folders reached twice, for example through APFS firmlinks, are counted once, at the first path found")
                 }
+                ForEach(model.scanLabels.filter(\.isStatusBarWorthy), id: \.self) { label in
+                    Label(label.title, systemImage: label.symbolName)
+                        .help(label.detail)
+                }
                 Spacer()
                 let failures = result.failureCount
                 let skipped = result.totalIssueCount
@@ -275,5 +291,15 @@ struct StatusBar: View {
         .foregroundStyle(.secondary)
         .labelStyle(.titleAndIcon)
         .padding(.horizontal, 12).padding(.vertical, 5)
+    }
+}
+
+private extension ScanLabel {
+    /// Labels that change how far the numbers can be trusted right now.
+    var isStatusBarWorthy: Bool {
+        switch self {
+        case .changedSinceScan, .stale, .restored: true
+        default: false
+        }
     }
 }

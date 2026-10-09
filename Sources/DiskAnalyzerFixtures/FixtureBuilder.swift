@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Builds a deterministic directory tree that exercises every scanner rule:
@@ -95,6 +96,7 @@ public enum FixtureBuilder {
         try file("Media/movie.mov", 2_500_000 * scale)
         try file("Media/song.m4a", 400_000 * scale)
         try file("Archive.zip", 800_000 * scale)
+        try file(".Trashes/\(getuid())/old-download.dmg", 600_000 * scale)
         try file("Résumé – final ✓.pdf", 50_000)
         try file("tiny.txt", 1)
         try file("zero.bin", 0)
@@ -170,7 +172,7 @@ public enum FixtureBuilder {
             hardLinkPaths: ["Projects/Beta/shared.bin", "Media/shared-link.bin"],
             packagePath: "Tools/Example.app",
             unreadablePath: unreadable,
-            hiddenPaths: [".hidden-config", "Projects/.cache", "FlaggedHidden.txt"],
+            hiddenPaths: [".hidden-config", ".Trashes", "Projects/.cache", "FlaggedHidden.txt"],
             oldFilePath: oldFile,
             symlinkPaths: symlinks
         )

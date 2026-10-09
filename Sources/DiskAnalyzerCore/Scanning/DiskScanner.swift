@@ -59,6 +59,7 @@ private struct Walker {
     var runningAllocated: Int64 = 0
     var runningLogical: Int64 = 0
     var currentDirectory = ""
+    var linkInodes: [NodeID: UInt64] = [:]
 
     init(options: ScanOptions, progress: DiskScanner.ProgressHandler?) {
         self.options = options
@@ -103,7 +104,7 @@ private struct Walker {
         if errno != 0, nodes.isEmpty { throw ScanError.cannotOpen(rootPath, errno) }
         try Task.checkCancellation()
 
-        let tree = FileTree.assemble(rootPath: rootPath, nodes: &nodes)
+        let tree = FileTree.assemble(rootPath: rootPath, nodes: &nodes, linkInodes: linkInodes)
         statistics.duration = clock.now - started
         report(elapsed: statistics.duration)
         return ScanResult(
@@ -209,6 +210,7 @@ private struct Walker {
             node.allocatedSize = allocated
             statistics.files += 1
             if st.st_nlink > 1 {
+                linkInodes[id] = UInt64(st.st_ino)
                 let key = HardLinkKey(device: st.st_dev, inode: st.st_ino)
                 if !seenHardLinks.insert(key).inserted {
                     node.flags.insert(.hardLinkDuplicate)
@@ -284,7 +286,7 @@ extension FileTree {
     /// Aggregates sizes bottom-up and lays children out contiguously, largest allocated first.
     /// Relies on `fts` creating every parent before its children (pre-order), so a reverse
     /// pass over the arena visits each child before its parent.
-    static func assemble(rootPath: String, nodes: inout [FileNode]) -> FileTree {
+    static func assemble(rootPath: String, nodes: inout [FileNode], linkInodes: [NodeID: UInt64] = [:]) -> FileTree {
         for index in stride(from: nodes.count - 1, to: 0, by: -1) {
             let node = nodes[index]
             guard node.parent >= 0, !node.flags.contains(.hardLinkDuplicate) else { continue }
@@ -318,6 +320,6 @@ extension FileTree {
                 return a.name.localizedStandardCompare(b.name) == .orderedAscending
             }
         }
-        return FileTree(rootPath: rootPath, nodes: nodes, childIndex: childIndex)
+        return FileTree(rootPath: rootPath, nodes: nodes, childIndex: childIndex, linkInodes: linkInodes)
     }
 }

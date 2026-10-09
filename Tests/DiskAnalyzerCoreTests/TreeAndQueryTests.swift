@@ -109,6 +109,45 @@ struct QueryTests {
         #expect(logical.map { tree[$0].name } == ["Sparse.img"])
     }
 
+    @Test func largestFoldersRanksGloballyAndExcludesPackages() {
+        let tree = makeTree(sample)
+        let top = TreeQueries.largestFolders(in: tree, query: LargestFoldersQuery(limit: 4))
+        let names = top.map { tree[$0].name }
+        #expect(names == ["Media", "Apps", "Docs", "Old"])
+        #expect(!names.contains("Tool.app"))
+        #expect(top.map { tree[$0].allocatedSize } == top.map { tree[$0].allocatedSize }.sorted(by: >))
+
+        let logical = TreeQueries.largestFolders(in: tree, query: LargestFoldersQuery(limit: 1, metric: .logical))
+        #expect(logical.map { tree[$0].name } == ["Media"])
+    }
+
+    @Test func largestFoldersRespectScopeAndHiddenFilter() {
+        let tree = makeTree([("Visible/", 0, 0), ("Visible/a", 100, 100), (".Trash/", 0, 0), (".Trash/b", 500, 500)])
+        let visibleOnly = TreeQueries.largestFolders(in: tree, query: LargestFoldersQuery(filter: FileFilter(includesHidden: false)))
+        #expect(visibleOnly.map { tree[$0].name } == ["Visible"])
+        let all = TreeQueries.largestFolders(in: tree, query: LargestFoldersQuery())
+        #expect(all.map { tree[$0].name } == [".Trash", "Visible"])
+
+        let sampleTree = makeTree(sample)
+        let videos = TreeQueries.largestFolders(in: sampleTree,
+            query: LargestFoldersQuery(filter: FileFilter(categories: [.video])))
+        #expect(videos.map { sampleTree[$0].name } == ["Media"])
+        let archive = TreeQueries.largestFolders(in: sampleTree,
+            query: LargestFoldersQuery(filter: FileFilter(nameContains: "archive")))
+        #expect(archive.map { sampleTree[$0].name } == ["Docs", "Old"])
+    }
+
+    @Test func trashFoldersFindHomeDataVolumeAndExternalTrash() {
+        let home = makeTree([(".Trash/", 0, 0), (".Trash/a", 10, 10)], root: "/Users/alice")
+        #expect(TreeQueries.trashFolders(in: home, homePath: "/Users/alice", userID: 501).map { home.path(of: $0) } == ["/Users/alice/.Trash"])
+
+        let data = makeTree([("Users/", 0, 0), ("Users/alice/", 0, 0), ("Users/alice/.Trash/", 0, 0), ("Users/alice/.Trash/a", 10, 10)], root: "/System/Volumes/Data")
+        #expect(TreeQueries.trashFolders(in: data, homePath: "/Users/alice", userID: 501).map { data.path(of: $0) } == ["/System/Volumes/Data/Users/alice/.Trash"])
+
+        let external = makeTree([(".Trashes/", 0, 0), (".Trashes/501/", 0, 0), (".Trashes/501/a", 10, 10), (".Trashes/502/", 0, 0), (".Trashes/502/b", 20, 20)], root: "/Volumes/External")
+        #expect(TreeQueries.trashFolders(in: external, homePath: "/Users/alice", userID: 501).map { external.path(of: $0) } == ["/Volumes/External/.Trashes/501"])
+    }
+
     @Test func largestItemsCanExposePackageContents() {
         let tree = makeTree(sample)
         let query = LargestItemsQuery(limit: 10, treatsPackagesAsItems: false)

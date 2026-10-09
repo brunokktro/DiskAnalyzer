@@ -6,6 +6,69 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-08
+
+### Added
+
+- **Biggest Folders** (⌘2): a dedicated top-500 view ranks ordinary folders by allocated or
+  logical subtree size, largest first, with location, item count, drill-down and CSV export. The
+  sidebar also keeps the five biggest top-level folders visible and labels folders that hold more
+  than 25% or 50% of the scan, without relying on color.
+- **Biggest Files** (⌘3), split from the old combined Largest Items label so folder and file
+  analysis are explicit.
+- Explicit **Trash sizing** for the current user's `~/.Trash` and per-volume `.Trashes/<uid>`:
+  allocated and logical size, item count, Measured/Partial/Empty/Not in scan states, direct
+  navigation and atomic folder rescan. A successful in-app move marks the shown Trash total as
+  changed until it is rescanned.
+- Product-reference documentation mapping the intentionally adopted TreeSize and Diskaroo
+  capabilities and naming the features outside this release.
+- Visual smoke validation now requires six opaque 1280×800 screenshots; a missing destination,
+  missing screenshot, translucent PNG or wrong dimensions fails the test.
+
+- Saved scans. The last scan of each root is saved in an SQLite database in
+  `~/Library/Application Support/Disk Analyzer/` (file `0600`, folder `0700`) and, at launch, the most
+  recent compatible one whose root is still the same folder is shown again. No scan starts at launch.
+- Root identity: a saved root is the volume UUID plus the folder's file ID, not its path. A renamed or
+  replaced folder, another volume at the same path, or a disconnected volume is never restored and is
+  listed with the reason.
+- Recent Scans in the sidebar (up to 10 roots), with size, date and availability.
+- **Rescan This Folder** (⇧⌘R, context menu): rescans one folder and replaces its subtree only when
+  that scan finishes. Cancelling or a failure keeps the previous results, on screen and saved. A
+  file hard-linked inside and outside the folder stays counted once, also when the counted link was
+  inside the folder and was deleted; for that the scanner records the inode of every multiply-linked
+  file, and a link deleted outside the folder never makes the rescan count its inode twice. The full
+  scan's baselines are kept, so freshness compares the volume with the full scan plus what the folder
+  rescans measured and still sees changes elsewhere.
+- **Scan as New Root** (context menu, File menu): a full scan rooted at the chosen folder.
+- **Rescan All** (⌘R, renamed from Rescan). Only ever started by the user.
+- Volume baselines (capacity, available, available for important use) at the start and end of every
+  scan and when the results are shown.
+- Space Reconciliation (⌥⌘S): file system used, available, purgeable estimate, measured allocation,
+  unreadable and skipped counts, space not attributed or shared, measured allocation beyond used space
+  (shown, never clamped), and the change during and since the scan. After folder rescans the buckets
+  are computed against the used space the results account for (end of scan plus what the rescans
+  measured), shown with both parts, so a rescanned folder's own change is never reported as
+  unattributed or as measured beyond used.
+- Labels: Complete, Partial, Whole volume, Folder only, Changed since scan, Stale, Restored. A folder
+  scan is never compared with the volume's used space.
+- Open Storage Settings… (General > Storage), through `NSWorkspace`, with a fallback to System Settings
+  and then to written instructions.
+- Database schema versioning with in-place upgrades in one transaction, and the expected tables and
+  columns checked at every open. A damaged file, or one whose tables are missing or different, is
+  moved aside, never deleted, and every snapshot that passes its checks is copied into a new file; a
+  file from a newer version is left untouched and saving is turned off for the session.
+- One SHA-256 checksum per saved row (identity, details and tree), plus range checks on every saved
+  size, count, date and volume figure and overflow-checked reconciliation arithmetic, so a damaged or
+  edited file is skipped instead of crashing the app at launch.
+- The Collector refuses a file that changed since the scan (other type, size or modification date),
+  so a file replaced at the same path since a saved scan cannot be moved to the Trash from it.
+- 217 tests (109 new: codec, store, damaged and edited files, root identity on real disk images,
+  subtree replacement, hard links across a rescanned folder, atomicity against the saved file,
+  reconciliation invariants and freshness after folder rescans, labels, Storage Settings, biggest
+  folder ranking and Trash discovery). The smoke test now relaunches the app, checks the restored
+  results and that no scan started, validates Biggest Folders and Trash sizing, and requires six
+  opaque screenshots.
+
 ### Fixed
 
 - Scanning the startup disk ("Macintosh HD" in the Open panel) no longer counts the Data volume

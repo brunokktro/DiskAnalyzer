@@ -20,6 +20,8 @@ metadata of anything your account can list. It is designed to be safe with that 
   It does not open, read, hash or upload file contents. Symbolic links are never followed during
   the walk.
 - **No network access.** The app makes no network requests and collects no telemetry.
+- **System Settings.** *Open Storage Settings…* only asks macOS (through `NSWorkspace`) to open the
+  Storage pane or System Settings. No scripting, no UI automation.
 - **No permanent deletion.** The single destructive action is *Move to Trash*, through
   `FileManager.trashItem`, after an explicit confirmation. Items stay restorable from the Trash.
 - **Trash guardrails.** Every item is re-checked right before it moves, and each one succeeds or
@@ -51,6 +53,38 @@ metadata of anything your account can list. It is designed to be safe with that 
   spreadsheet would evaluate as formulas (`=`, `+`, `-`, `@`) are prefixed with `'`.
 - **Privacy protection.** Folders protected by macOS (TCC) are reported as skipped. Granting
   Full Disk Access is optional and only extends what the scan can measure.
+
+## Saved scans
+
+- **What is saved.** The last scan of each root (up to 10 roots): file and folder names, sizes,
+  dates, the skipped-items list, the root's volume UUID and file ID, and the volume's capacity
+  figures. No file contents. Nothing leaves the Mac.
+- **Where.** `~/Library/Application Support/Disk Analyzer/Snapshots.sqlite`. The app creates the
+  folder with mode `0700` and the file with `0600`. The file is not encrypted; FileVault protects it
+  at rest like the rest of your home folder. To remove every saved scan, quit the app and move that
+  folder to the Trash.
+- **Restoring is checked.** A snapshot is shown only when its root is the same folder (same volume
+  UUID and file ID) as when it was saved. Every saved row (identity, scope, dates, list figures,
+  details and tree) is verified against one SHA-256 checksum, so accidental damage anywhere in the
+  row keeps it from being restored. The checksum is not a signature: whoever edits the file can
+  recompute it. What keeps an edited file from crashing the app is validation before use: the tree's
+  whole parent/child structure, every size and count in range (0 to 2^56 bytes), no folder smaller
+  than the counted entries inside it, plausible dates, durations and volume figures, and byte
+  arithmetic that reports an overflow instead of trapping. A row that fails any check is not
+  restored and stays on disk; the list shows only rows whose list figures are in range. A file whose
+  tables are not the ones this version uses is moved aside like a damaged one.
+- **Damaged files are never deleted.** A file that SQLite cannot read, that fails its integrity
+  check, that another program created, whose tables are missing or different, or whose format cannot
+  be upgraded is renamed next to the original (`Snapshots.unreadable-<date>.sqlite`) and the user is
+  told. Readable snapshots are copied out of it first. A file written by a newer version is left
+  untouched and saving is turned off.
+- **Restored results and the Trash.** Collecting and moving to the Trash work on restored results
+  with the same per-item checks as on fresh ones (identity at collection time, containment, protected
+  locations). A file that no longer has the type, size or modification date the scan recorded (a
+  file replaced at the same path since a saved scan, for example) cannot be collected, so it cannot
+  be moved to the Trash from those results; rescan its folder first. The confirmation says when the
+  results were restored or the volume changed since the scan, because sizes may differ from what is
+  shown.
 
 ## Things that are out of scope
 

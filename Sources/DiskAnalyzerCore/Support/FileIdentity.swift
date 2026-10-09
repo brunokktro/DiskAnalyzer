@@ -38,4 +38,13 @@ public extension PathUtilities {
         defer { free(pointer) }
         return standardize(String(cString: pointer))
     }
+
+    /// `realpath(3)` exactly as the system returns it. Unlike ``resolved(_:)`` it keeps
+    /// `/private/var` instead of shortening it to `/var`, so it compares equal to the mount
+    /// points `statfs(2)` reports.
+    static func physicalPath(_ path: String) -> String? {
+        guard let pointer = realpath(path, nil) else { return nil }
+        defer { free(pointer) }
+        return String(cString: pointer)
+    }
 }

@@ -19,15 +19,40 @@ struct SidebarView: View {
                     VolumeRow(volume: volume) { model.scan(volume) }
                 }
             }
+            if !model.recentScans.isEmpty {
+                Section("Recent Scans") {
+                    ForEach(model.recentScans) { scan in
+                        RecentScanRow(scan: scan, isCurrent: model.context?.root.key == scan.summary.root.key) {
+                            model.openRecent(scan)
+                        }
+                    }
+                }
+            }
             if let result = model.lastResult {
                 Section("Current Scan") {
+                    ScanLabelsView(labels: model.scanLabels)
+                    if let problem = model.persistenceProblem {
+                        Label("Not saved: \(problem)", systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     LabeledContent("Allocated", value: SizeFormatting.string(model.tree?.root.allocatedSize ?? 0))
                     LabeledContent("Logical", value: SizeFormatting.string(model.tree?.root.logicalSize ?? 0))
                     LabeledContent("Files", value: SizeFormatting.count(Int64(result.statistics.files)))
                     LabeledContent("Folders", value: SizeFormatting.count(Int64(result.statistics.directories)))
                     LabeledContent("Duration", value: result.statistics.duration.formatted(.units(allowed: [.minutes, .seconds, .milliseconds], width: .narrow, maximumUnitCount: 2)))
+                    LabeledContent("Scanned", value: result.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                    Button("Space Reconciliation…", systemImage: "chart.bar.doc.horizontal") { model.showReconciliation() }
+                        .buttonStyle(.borderless)
+                        .disabled(model.reconciliation == nil)
+                        .help("Compare what the scan measured with the volume's used space")
                 }
                 .font(.callout)
+                Section("Trash") {
+                    TrashSizingView(model: model)
+                }
+                Section("Biggest Folders") {
+                    SpaceHogsView(model: model)
+                }
                 Section("Breakdown") {
                     CategoryBreakdownView(model: model)
                 }
@@ -84,6 +109,99 @@ private struct VolumeRow: View {
         }
         .buttonStyle(.plain)
         .help("Scan \(volume.scanPath) (\(volume.fileSystemType))")
+    }
+}
+
+private struct TrashSizingView: View {
+    let model: AppModel
+
+    var body: some View {
+        let insight = model.trashInsight
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                model.showTrash()
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Label("Trash", systemImage: "trash")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text(SizeFormatting.string(insight.allocated))
+                            .monospacedDigit()
+                    }
+                    Label(insight.coverage.title, systemImage: insight.coverage.symbol)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if insight.coverage != .notInScan {
+                        Text("\(SizeFormatting.string(insight.logical)) logical · \(SizeFormatting.count(insight.items)) items")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Scan Home or a whole volume to include it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(insight.primaryFolderID == nil)
+
+            if insight.primaryFolderID != nil {
+                HStack {
+                    Button("View", systemImage: "arrow.right.circle") { model.showTrash() }
+                    Button("Rescan", systemImage: "arrow.clockwise") { model.rescanTrash() }
+                        .disabled(!model.canRescanTrash)
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        .help("Trash still consumes disk space until it is emptied. Partial is a lower bound; Changed means Rescan is required for a current total.")
+    }
+}
+
+private struct SpaceHogsView: View {
+    let model: AppModel
+
+    var body: some View {
+        let rows = model.spaceHogRows
+        let total = max(model.tree?.root.size(model.metric) ?? 0, 1)
+        if rows.isEmpty {
+            Text("No measured folders in this root.").font(.caption).foregroundStyle(.secondary)
+        } else {
+            ForEach(rows) { row in
+                let fraction = Double(row.size(model.metric)) / Double(total)
+                Button {
+                    model.focus(on: row.id)
+                    model.mode = .explore
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Label(row.name, systemImage: "folder.fill")
+                                .lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(SizeFormatting.string(row.size(model.metric))).monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        ShareBar(fraction: fraction, category: .folder)
+                        HStack {
+                            Text(SizeFormatting.percent(row.size(model.metric), of: total) + " of scan")
+                            Spacer()
+                            if fraction >= 0.5 {
+                                Label("Dominant", systemImage: "exclamationmark.triangle.fill")
+                            } else if fraction >= 0.25 {
+                                Label("Large share", systemImage: "exclamationmark.circle")
+                            }
+                        }
+                        .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            Button("View all biggest folders", systemImage: "list.number") {
+                model.focus(on: FileTree.rootID)
+                model.mode = .folders
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
     }
 }
 
@@ -192,7 +310,11 @@ struct ScanProgressView: View {
     var body: some View {
         VStack(spacing: 18) {
             ProgressView().controlSize(.large)
-            Text("Scanning \(model.scanRoot?.lastPathComponent ?? "")…").font(.title2.weight(.semibold))
+            Text(model.scanningTitle).font(.title2.weight(.semibold))
+            if model.rescanningFolder != nil {
+                Text("The previous results stay as they are until this finishes.")
+                    .foregroundStyle(.secondary)
+            }
             if let progress = model.progress {
                 Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 6) {
                     row("Items", SizeFormatting.count(Int64(progress.entriesVisited)))
@@ -220,6 +342,56 @@ struct ScanProgressView: View {
         GridRow {
             Text(title).foregroundStyle(.secondary)
             Text(value).gridColumnAlignment(.leading)
+        }
+    }
+}
+
+/// One saved scan. Unavailable ones say why with a symbol and text, and cannot be opened.
+private struct RecentScanRow: View {
+    let scan: RecentScan
+    let isCurrent: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label((scan.summary.root.path as NSString).lastPathComponent.nilIfEmpty ?? scan.summary.root.path,
+                      systemImage: scan.summary.scope == .volume ? "internaldrive" : "folder")
+                    .fontWeight(isCurrent ? .semibold : .regular)
+                    .lineLimit(1).truncationMode(.middle)
+                Text("\(SizeFormatting.string(scan.summary.allocatedBytes)) · \(scan.summary.savedAt.formatted(.relative(presentation: .named)))")
+                    .font(.caption).foregroundStyle(.secondary)
+                if !scan.summary.isCompatible {
+                    Label("Saved by another version", systemImage: "questionmark.circle")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if !scan.availability.isRestorable {
+                    Label(scan.availability.title, systemImage: scan.availability.symbolName)
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if scan.summary.isPartial {
+                    Label("Partial", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .opacity(scan.canOpen ? 1 : 0.6)
+        .help(scan.canOpen ? "Open the saved scan of \(scan.summary.root.path)" : scan.availability.explanation)
+    }
+}
+
+/// Status labels of the current scan: symbol plus text, with the explanation on hover.
+struct ScanLabelsView: View {
+    let labels: [ScanLabel]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(labels, id: \.self) { label in
+                Label(label.title, systemImage: label.symbolName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(label.detail)
+                    .accessibilityHint(label.detail)
+            }
         }
     }
 }

@@ -21,14 +21,16 @@ scripts/smoke-test.sh    # launch the packaged app against a fixture and verify 
 ```
 Sources/
   DiskAnalyzerCore/      all logic, no UI imports except Foundation
-    Models/              FileTree, FileNode, PathUtilities
+    Models/              FileTree, FileNode, PathUtilities, subtree replacement
     Scanning/            DiskScanner (fts), ScanTypes
-    Query/               filters, largest items, categories
+    Persistence/         SnapshotStore (SQLite), TreeCodec, RootIdentity, VolumeBaseline
+    Reconciliation/      SpaceReconciliation, freshness policy, scan labels
+    Query/               filters, biggest folders/files, Trash discovery, categories
     Treemap/             squarified layout and hit testing
     Collector/           staging area for the Trash
     Trash/               TrashPolicy, TrashOperation, TrashMover
     Volumes/             VolumeLocator
-    Support/             size formatting, CSV export
+    Support/             size formatting, CSV export, Storage Settings opener
   DiskAnalyzer/          SwiftUI app (App/, Views/)
   DiskAnalyzerFixtures/  deterministic fixture tree
   FixtureGenerator/      CLI around the fixture
@@ -46,13 +48,19 @@ docs/ARCHITECTURE.md
    in a system process.
 2. **No permanent deletion.** The only removal path is `TrashOperation` through `TrashPolicy`
    and `FileManager.trashItem`. Do not add `removeItem`, `unlink` or similar on user data.
-3. **Tests never touch the real Trash.** Use `RecordingMover` (tests) or `RecordingTrashMover`
-   (smoke test).
+3. **Tests never touch the real Trash, the real saved scans or System Settings.** Use
+   `RecordingMover` (tests) or `RecordingTrashMover` (smoke test), a `TemporaryStore` or
+   `--smoke-store`, and a recording `SettingsOpening`.
 4. **No machine-specific data.** No hardcoded user names, home paths or volume names. Resolve at
    runtime (`homeDirectoryForCurrentUser`, `statfs`, `mountedVolumeURLs`).
 5. **Do not over-claim sizes.** Allocated size is an estimate of reclaimable space on APFS;
-   UI text must not promise exact freed space.
+   UI text must not promise exact freed space. A folder scan is never compared with the volume's
+   used space, and reconciliation buckets are never clamped to make numbers agree.
 6. **Information is never color-only.** Pair colors with a symbol, a label, a pattern or a border.
+7. **Saved data is never deleted to recover.** A damaged or unknown database is moved aside. Bump
+   `SnapshotSchema.version` with an upgrade step for every schema change, and
+   `TreeCodec.formatVersion` for every tree layout change.
+8. **Nothing scans on its own.** Launch restores saved results; every scan starts from a user action.
 
 ## Toolchain notes
 
@@ -79,10 +87,16 @@ docs/ARCHITECTURE.md
 
 ## Smoke-test mode
 
-The app accepts `--smoke-test <folder> --smoke-report <file.json> [--smoke-snapshot <file.png>]`.
-It scans the folder through the real `AppModel`, exercises navigation, filters, the treemap and
-the Collector-to-Trash flow with a recording mover (nothing is moved), writes the report and
-exits with 0 on success, 1 on a failed check, 2 on timeout. `scripts/smoke-test.sh` wraps it.
+The app accepts `--smoke-test <folder> --smoke-report <file.json> [--smoke-store <db>] [--smoke-snapshot <file.png>]`.
+It scans the folder through the real `AppModel`, exercises navigation, filters, the treemap,
+Biggest Folders, Biggest Files, explicit Trash sizing and navigation, the Collector-to-Trash flow
+with a recording mover (nothing is moved), saving, Rescan This Folder (finished and cancelled) and
+Storage Settings with a recording opener, writes the report and exits with 0 on success, 1 on a
+failed check, 2 on timeout. When `SNAPSHOT` is set, the harness requires six opaque 1280×800 PNGs:
+Explore, Biggest Folders, Biggest Files, Trash, Collector and Restored.
+`--smoke-restore <first-report.json> --smoke-report <file.json> --smoke-store <db>` relaunches on
+the same saved-scans file and checks the restored totals and that no scan started.
+`scripts/smoke-test.sh` runs both.
 
 ## Pull requests
 

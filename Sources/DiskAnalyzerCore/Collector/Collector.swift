@@ -16,6 +16,10 @@ public struct Collector: Sendable, Equatable {
             case notMeasured
             /// Its name, or an ancestor's, is not valid UTF-8, so the path may not name this item.
             case invalidName
+            /// What is at the path now is not what the scan measured: another type, or a file with
+            /// another size or modification date (typical of restored results). The sizes shown
+            /// would be wrong and the object may be a different one; rescan first.
+            case changedSinceScan
         }
 
         public var id: String { path }
@@ -142,7 +146,7 @@ public extension Collector.Item {
             hasOtherHardLinks: exists && !node.isDirectory && info.st_nlink > 1,
             identity: exists ? FileIdentity(info) : nil,
             isHardLinkDuplicate: node.flags.contains(.hardLinkDuplicate),
-            limitation: Self.limitation(of: id, in: tree),
+            limitation: Self.limitation(of: id, in: tree) ?? (exists && !Self.matchesScan(node, info) ? .changedSinceScan : nil),
             unmeasuredFolders: node.isDirectory ? Self.unmeasuredFolders(below: id, in: tree) : 0
         )
     }
@@ -151,6 +155,20 @@ public extension Collector.Item {
     static func limitation(of id: NodeID, in tree: FileTree) -> Limitation? {
         if !tree.hasExactPath(id) { return .invalidName }
         return tree[id].flags.isDisjoint(with: .notMeasured) ? nil : .notMeasured
+    }
+
+    /// The object at the path has the type the scan recorded and, for a file, the same size and
+    /// modification date (computed as the scanner does, so equal values compare exactly).
+    static func matchesScan(_ node: FileNode, _ info: stat) -> Bool {
+        let type = info.st_mode & S_IFMT
+        switch node.kind {
+        case .directory: return type == S_IFDIR
+        case .symlink: return type == S_IFLNK
+        case .other: return true
+        case .file:
+            let mtime = Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9
+            return type == S_IFREG && Int64(info.st_size) == node.logicalSize && mtime == node.modificationTime
+        }
     }
 
     private static func unmeasuredFolders(below id: NodeID, in tree: FileTree) -> Int {

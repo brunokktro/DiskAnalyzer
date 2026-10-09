@@ -92,11 +92,15 @@ public struct FileTree: Sendable {
     public let rootPath: String
     public private(set) var nodes: [FileNode]
     public private(set) var childIndex: [NodeID]
+    /// `st_ino` of each file that had more than one link when it was scanned. Lets a folder
+    /// rescan tell which inode a link that no longer exists named. Sparse: most files have one link.
+    public private(set) var linkInodes: [NodeID: UInt64]
 
-    init(rootPath: String, nodes: [FileNode], childIndex: [NodeID]) {
+    init(rootPath: String, nodes: [FileNode], childIndex: [NodeID], linkInodes: [NodeID: UInt64] = [:]) {
         self.rootPath = rootPath
         self.nodes = nodes
         self.childIndex = childIndex
+        self.linkInodes = linkInodes
     }
 
     public var count: Int { nodes.count }
@@ -205,6 +209,14 @@ public struct FileTree: Sendable {
         }
     }
 
+    /// Records the inode that identifies a hard-linked file across later folder rescans.
+    /// The map stays sparse; callers use this only for a file known to participate in
+    /// cross-boundary hard-link reconciliation.
+    mutating func rememberLinkInode(_ inode: UInt64, for id: NodeID) {
+        guard contains(id), id != Self.rootID, nodes[Int(id)].kind == .file else { return }
+        linkInodes[id] = inode
+    }
+
     /// Marks a node as moved to the Trash and subtracts its contribution from every ancestor.
     /// Returns `false` if it was already removed.
     @discardableResult
@@ -221,6 +233,36 @@ public struct FileTree: Sendable {
             current = nodes[Int(current)].parent
         }
         return true
+    }
+
+    /// Flags a file as a second path to an inode counted elsewhere and takes its sizes out of
+    /// every ancestor, as if the scan had found it second.
+    mutating func markHardLinkDuplicate(_ id: NodeID) {
+        guard contains(id), !nodes[Int(id)].flags.contains(.hardLinkDuplicate) else { return }
+        let node = nodes[Int(id)]
+        nodes[Int(id)].flags.insert(.hardLinkDuplicate)
+        var current = node.parent
+        while current >= 0 {
+            nodes[Int(current)].logicalSize -= node.logicalSize
+            nodes[Int(current)].allocatedSize -= node.allocatedSize
+            nodes[Int(current)].itemCount -= node.itemCount
+            current = nodes[Int(current)].parent
+        }
+    }
+
+    /// Clears ``NodeFlags/hardLinkDuplicate`` on a file and adds its sizes to every ancestor:
+    /// the inverse of ``markHardLinkDuplicate(_:)``, for a link that is now the only one counted.
+    mutating func markCounted(_ id: NodeID) {
+        guard contains(id), id != Self.rootID, nodes[Int(id)].kind == .file, nodes[Int(id)].flags.contains(.hardLinkDuplicate) else { return }
+        let node = nodes[Int(id)]
+        nodes[Int(id)].flags.remove(.hardLinkDuplicate)
+        var current = node.parent
+        while current >= 0 {
+            nodes[Int(current)].logicalSize += node.logicalSize
+            nodes[Int(current)].allocatedSize += node.allocatedSize
+            nodes[Int(current)].itemCount += node.itemCount
+            current = nodes[Int(current)].parent
+        }
     }
 }
 

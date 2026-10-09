@@ -1,7 +1,7 @@
 import DiskAnalyzerCore
 import SwiftUI
 
-/// Context-menu actions shared by the list, the Largest Items table and the treemap.
+/// Context-menu actions shared by the hierarchy, biggest-folder and biggest-file tables, and treemap.
 struct ItemActions: View {
     let model: AppModel
     let ids: Set<NodeID>
@@ -21,6 +21,13 @@ struct ItemActions: View {
                 .disabled(!anyExact)
             Button(ids.count == 1 ? "Copy Path" : "Copy Paths", systemImage: "doc.on.doc") { model.copyPaths(ids) }
                 .disabled(!anyExact)
+            if let single, tree[single].isDirectory {
+                Divider()
+                Button("Rescan This Folder", systemImage: "arrow.clockwise") { model.rescanFolder(single) }
+                    .disabled(!model.canRescanFolder(single))
+                Button("Scan as New Root", systemImage: "scope") { model.scanAsNewRoot(single) }
+                    .disabled(!model.canScanAsNewRoot(single))
+            }
             Divider()
             Button("Add to Collector", systemImage: "tray.and.arrow.down") { model.collect(ids) }
                 .disabled(!ids.contains(where: model.canCollect))
@@ -140,6 +147,59 @@ struct SizeCell: View {
     }
 }
 
+/// Top folders below the focus folder, ranked globally by subtree size.
+struct LargestFoldersView: View {
+    @Bindable var model: AppModel
+
+    var body: some View {
+        let rows = model.largestFolderRows
+        let total = max(model.focusNode?.size(model.metric) ?? 0, 1)
+        VStack(spacing: 0) {
+            HStack {
+                Label("Biggest folders in \(model.displayName(model.focus))", systemImage: "folder.fill")
+                    .font(.headline)
+                Text("(top \(rows.count), largest first)")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Export CSV…", systemImage: "square.and.arrow.up") { model.exportLargestFolders() }
+                    .disabled(rows.isEmpty)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            Divider()
+            Table(rows, selection: $model.listSelection, sortOrder: $model.listSortOrder) {
+                TableColumn("Folder", value: \EntryRow.name) { (row: EntryRow) in
+                    NameCell(row: row, location: model.relativeLocation(of: row.id))
+                }
+                .width(min: 220, ideal: 360)
+                TableColumn(model.metric.title, value: model.metric.rowKeyPath) { (row: EntryRow) in
+                    SizeCell(bytes: row.size(model.metric), total: total, category: .folder)
+                }
+                .width(min: 150, ideal: 190)
+                TableColumn("Items", value: \EntryRow.items) { (row: EntryRow) in
+                    Text(SizeFormatting.count(row.items)).monospacedDigit().foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .width(min: 60, ideal: 80)
+                TableColumn("Modified", value: \EntryRow.modified) { (row: EntryRow) in
+                    DateCell(date: row.modified)
+                }
+                .width(min: 90, ideal: 110)
+            }
+            .contextMenu(forSelectionType: NodeID.self) { ids in
+                ItemActions(model: model, ids: ids)
+            } primaryAction: { ids in
+                if ids.count == 1, let id = ids.first { model.focus(on: id); model.mode = .explore }
+            }
+            .overlay {
+                if rows.isEmpty {
+                    ContentUnavailableView("No Folders", systemImage: "folder.badge.questionmark",
+                                           description: Text(model.filter.isActive ? "No folder matches the filter." : "No measured folder exists below this location."))
+                }
+            }
+        }
+    }
+}
+
 /// Top files and packages below the focus folder.
 struct LargestItemsView: View {
     @Bindable var model: AppModel
@@ -149,7 +209,7 @@ struct LargestItemsView: View {
         let total = max(model.focusNode?.size(model.metric) ?? 0, 1)
         VStack(spacing: 0) {
             HStack {
-                Text("Largest files and packages in \(model.displayName(model.focus))")
+                Text("Biggest files and packages in \(model.displayName(model.focus))")
                     .font(.headline)
                 Text("(top \(rows.count), hard links counted once)")
                     .foregroundStyle(.secondary)

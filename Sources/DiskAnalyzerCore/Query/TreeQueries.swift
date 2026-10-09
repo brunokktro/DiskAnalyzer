@@ -1,6 +1,6 @@
 import Foundation
 
-/// Criteria shared by the hierarchy listing, the treemap and the Largest Items list.
+/// Criteria shared by the hierarchy, treemap, Biggest Folders and Biggest Files views.
 public struct FileFilter: Sendable, Hashable {
     public enum Age: String, CaseIterable, Sendable, Identifiable {
         case any, olderThanMonth, olderThanSixMonths, olderThanYear, newerThanWeek, newerThanMonth
@@ -87,6 +87,18 @@ public struct LargestItemsQuery: Sendable, Hashable {
     }
 }
 
+public struct LargestFoldersQuery: Sendable, Hashable {
+    public var limit: Int
+    public var metric: SizeMetric
+    public var filter: FileFilter
+
+    public init(limit: Int = 200, metric: SizeMetric = .allocated, filter: FileFilter = .none) {
+        self.limit = limit
+        self.metric = metric
+        self.filter = filter
+    }
+}
+
 public enum TreeQueries {
     /// Largest files (and optionally packages) below `start`, biggest first.
     /// Hard-link duplicates are skipped so the list never double-counts an inode.
@@ -106,6 +118,72 @@ public enum TreeQueries {
             return !isPackageItem
         }
         return heap.sortedDescending().map(\.1)
+    }
+
+    /// Largest ordinary folders below `start`, biggest first. Packages stay in the files view.
+    /// The result is bounded and does not duplicate the scan tree in memory.
+    public static func largestFolders(in tree: FileTree, under start: NodeID = FileTree.rootID,
+                                      query: LargestFoldersQuery, now: Date = Date()) -> [NodeID] {
+        guard query.limit > 0 else { return [] }
+        let matchingSubtrees = query.filter.isActive
+            ? folderSubtreeMatches(in: tree, under: start, metric: query.metric, filter: query.filter, now: now)
+            : nil
+        var heap = BoundedMinHeap(capacity: query.limit) { (lhs: (Int64, NodeID), rhs: (Int64, NodeID)) in
+            lhs.0 != rhs.0 ? lhs.0 < rhs.0 : lhs.1 > rhs.1
+        }
+        tree.walkDescendants(of: start) { id, node in
+            if !query.filter.includesHidden, node.flags.contains(.hidden) { return false }
+            guard node.isDirectory else { return true }
+            guard !node.isPackage else { return false }
+            if node.size(query.metric) > 0, matchingSubtrees?[Int(id)] ?? true {
+                heap.insert((node.size(query.metric), id))
+            }
+            return true
+        }
+        return heap.sortedDescending().map(\.1)
+    }
+
+    /// One bottom-up pass marks folders that contain a filter match. This keeps Biggest Folders
+    /// linear before the bounded heap even when a name, kind, age or size filter is active.
+    private static func folderSubtreeMatches(in tree: FileTree, under start: NodeID, metric: SizeMetric,
+                                             filter: FileFilter, now: Date) -> [Bool] {
+        var visited: [NodeID] = []
+        tree.walkDescendants(of: start) { id, node in
+            if !filter.includesHidden, node.flags.contains(.hidden) { return false }
+            visited.append(id)
+            return !node.isPackage
+        }
+        var matches = [Bool](repeating: false, count: tree.count)
+        for id in visited.reversed() {
+            let node = tree[id]
+            var matchesHere = filter.matches(node, metric: metric, now: now)
+            if node.isDirectory, !matchesHere {
+                matchesHere = tree.children(of: id).contains { matches[Int($0)] }
+            }
+            matches[Int(id)] = matchesHere
+        }
+        return matches
+    }
+
+    /// Trash folders belonging to the current user inside this scan. The home Trash is matched
+    /// by suffix so the APFS Data-volume path also resolves; removable volumes use `.Trashes/<uid>`.
+    public static func trashFolders(in tree: FileTree, homePath: String, userID: UInt32) -> [NodeID] {
+        let homeTrash = PathUtilities.standardize(homePath) + "/.Trash"
+        let volumeTrashSuffix = "/.Trashes/\(userID)"
+        var matches: [NodeID] = []
+
+        func isTrash(_ id: NodeID) -> Bool {
+            let path = PathUtilities.standardize(tree.path(of: id))
+            return path == homeTrash || path.hasSuffix(homeTrash) || path.hasSuffix(volumeTrashSuffix)
+        }
+
+        if isTrash(FileTree.rootID) { matches.append(FileTree.rootID) }
+        tree.walkDescendants(of: FileTree.rootID) { id, node in
+            guard node.isDirectory else { return true }
+            if isTrash(id) { matches.append(id); return false }
+            return true
+        }
+        return matches
     }
 
     /// Children of `parent` that pass the filter. A directory passes when itself or
