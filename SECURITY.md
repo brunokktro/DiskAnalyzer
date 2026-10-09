@@ -19,7 +19,17 @@ metadata of anything your account can list. It is designed to be safe with that 
 - **Read-only scanning.** The scanner only reads file metadata with `lstat(2)` through `fts(3)`.
   It does not open, read, hash or upload file contents. Symbolic links are never followed during
   the walk.
-- **No network access.** The app makes no network requests and collects no telemetry.
+- **Cloud-safe content policy.** Both scan modes apply `IOPOL_MATERIALIZE_DATALESS_FILES_OFF` to
+  the scanner worker, read the effective policy back, and restore the prior value when the scan
+  ends or is cancelled. *Local files only* also detects `SF_DATALESS`, skips dataless directories
+  before descending and gives dataless files zero logical and allocated contribution. *Include
+  cloud catalog* is explicit opt-in: regular-file contents remain protected, but File Provider
+  directory enumeration can add local metadata/cache entries for OneDrive, WorkDocs, iCloud Drive
+  or another provider, and remote logical sizes are included.
+- **No direct network access.** The app makes no network requests and collects no telemetry.
+  **Include cloud catalog** can cause the system File Provider extension to contact its service to
+  enumerate directory metadata; that behavior belongs to the selected provider and is disclosed
+  before the scan starts.
 - **System Settings.** *Open Storage Settings…* only asks macOS (through `NSWorkspace`) to open the
   Storage pane or System Settings. No scripting, no UI automation.
 - **No permanent deletion.** The single destructive action is *Move to Trash*, through

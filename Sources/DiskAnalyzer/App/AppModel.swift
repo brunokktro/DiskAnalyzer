@@ -72,6 +72,23 @@ struct SnapshotContext {
     var restoredAt: Date?
 }
 
+
+/// A scan waiting for explicit user confirmation. Navigation to an existing snapshot never creates one.
+struct ScanProposal: Identifiable {
+    let id = UUID()
+    let root: URL
+    let preservingFocus: String?
+    let estimatedBytes: Int64?
+    let bytesAreUpperBound: Bool
+    let previousStatistics: ScanStatistics?
+    let previousMode: CloudScanMode?
+    let lastScannedAt: Date?
+
+    func estimate(for mode: CloudScanMode) -> ScanDurationEstimate {
+        ScanDurationEstimate.make(estimatedBytes: estimatedBytes, previous: previousStatistics,
+                                  previousMode: previousMode, mode: mode)
+    }
+}
 /// Opens System Settings through `NSWorkspace`, the public AppKit API.
 struct WorkspaceSettingsOpener: SettingsOpening {
     func canOpen(_ url: URL) -> Bool { NSWorkspace.shared.urlForApplication(toOpen: url) != nil }
@@ -199,6 +216,8 @@ final class AppModel {
     var isReconciliationPresented = false
     var trashSummary: TrashSummary?
     var alertMessage: String?
+    private(set) var pendingScan: ScanProposal?
+    var pendingCloudMode: CloudScanMode
 
     // MARK: Options
 
@@ -245,6 +264,7 @@ final class AppModel {
         self.settingsOpener = settingsOpener
         metric = defaults.string(forKey: Keys.metric).flatMap(SizeMetric.init(rawValue:)) ?? .allocated
         staysOnVolume = defaults.object(forKey: Keys.staysOnVolume) as? Bool ?? true
+        pendingCloudMode = .localOnly
         refreshVolumes()
         restoreLastScan()
     }
@@ -259,26 +279,77 @@ final class AppModel {
         volumes = VolumeLocator.scannableVolumes()
     }
 
-    func scanHome() { startScan(homeURL) }
+    /// Sidebar destinations navigate first. A scan is proposed only when no saved result exists.
+    func scanHome() { openRoot(homeURL) }
 
-    func scan(_ volume: VolumeInfo) { startScan(URL(fileURLWithPath: volume.scanPath, isDirectory: true)) }
+    func scan(_ volume: VolumeInfo) {
+        openRoot(URL(fileURLWithPath: volume.scanPath, isDirectory: true))
+    }
 
     func chooseFolder() {
         let panel = NSOpenPanel()
         panel.title = "Choose a Folder to Analyze"
-        panel.prompt = "Scan"
+        panel.prompt = "Open or Scan"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.treatsFilePackagesAsDirectories = true
         panel.directoryURL = scanRoot ?? homeURL
-        if panel.runModal() == .OK, let url = panel.url { startScan(url) }
+        if panel.runModal() == .OK, let url = panel.url { openRoot(url) }
     }
 
-    /// Rescan All: the whole current root again. Only ever started by the user.
+    func openRoot(_ requested: URL) {
+        guard !isScanning else {
+            alertMessage = "A scan is running. Stop it before opening another saved root."
+            return
+        }
+        let path = VolumeLocator.preferredScanRoot(for: requested.path(percentEncoded: false))
+        if let tree, tree.rootPath == path {
+            focus(on: FileTree.rootID)
+            mode = .explore
+            return
+        }
+        if let saved = recentScans.first(where: { $0.summary.root.path == path && $0.canOpen }) {
+            openRecent(saved)
+            return
+        }
+        proposeScan(URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    /// Presents cost, freshness and cloud coverage before a full-root scan starts.
+    private func proposeScan(_ requested: URL, preservingFocus: String? = nil) {
+        let path = VolumeLocator.preferredScanRoot(for: requested.path(percentEncoded: false))
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        let previous = tree?.rootPath == path ? lastResult : nil
+        let saved = recentScans.first { $0.summary.root.path == path && $0.canOpen }
+        let baseline = VolumeBaseline.capture(forPath: path)
+        let scope = CoverageScope.determine(rootPath: path, staysOnVolume: staysOnVolume)
+        let bytes = previous?.tree.root.allocatedSize ?? saved?.summary.allocatedBytes ?? baseline?.used
+        pendingCloudMode = .localOnly
+        pendingScan = ScanProposal(root: url, preservingFocus: preservingFocus, estimatedBytes: bytes,
+                                   bytesAreUpperBound: previous == nil && saved == nil && scope == .folder,
+                                   previousStatistics: previous?.statistics,
+                                   previousMode: previous?.options.cloudScanMode,
+                                   lastScannedAt: previous?.finishedAt ?? saved?.summary.finishedAt)
+    }
+
+    func confirmPendingScan() {
+        guard let proposal = pendingScan else { return }
+        let mode = pendingCloudMode
+        pendingScan = nil
+        startScan(proposal.root, preservingFocus: proposal.preservingFocus, cloudMode: mode)
+    }
+
+    func cancelPendingScan() { pendingScan = nil }
+
+    var pendingScanEstimate: ScanDurationEstimate? {
+        pendingScan?.estimate(for: pendingCloudMode)
+    }
+
+    /// Rescan All still requires explicit confirmation after showing cost and cloud behavior.
     func rescan() {
         guard let scanRoot else { return }
-        startScan(scanRoot, preservingFocus: tree.map { $0.path(of: focus) })
+        proposeScan(scanRoot, preservingFocus: tree.map { $0.path(of: focus) })
     }
 
     /// The folder Rescan This Folder and Scan as New Root act on from the menu: the single
@@ -290,7 +361,8 @@ final class AppModel {
     }
 
     func canRescanFolder(_ id: NodeID) -> Bool {
-        guard let tree, !isScanning, context != nil else { return false }
+        guard let tree, !isScanning, context != nil,
+              lastResult?.options.cloudScanMode != .legacyUnspecified else { return false }
         return SubtreeRescan.canRescan(id, in: tree)
     }
 
@@ -331,10 +403,10 @@ final class AppModel {
         return tree[id].isDirectory && !tree.isRemoved(id) && tree.hasExactPath(id)
     }
 
-    /// Starts a full scan rooted at this folder. The current root stays in Recent Scans.
+    /// Proposes a full scan rooted at this folder. The current root stays in Recent Scans.
     func scanAsNewRoot(_ id: NodeID) {
         guard canScanAsNewRoot(id), let tree else { return }
-        startScan(tree.url(of: id))
+        proposeScan(tree.url(of: id))
     }
 
     private func finishFolderRescan(_ updated: ScanSnapshot, now: VolumeBaseline?, generation: Int, focusPath: String) {
@@ -383,7 +455,8 @@ final class AppModel {
         return "Scanning \(scanRoot?.lastPathComponent ?? "")…"
     }
 
-    func startScan(_ requested: URL, preservingFocus focusPath: String? = nil) {
+    func startScan(_ requested: URL, preservingFocus focusPath: String? = nil,
+                   cloudMode: CloudScanMode = .localOnly) {
         let url = URL(fileURLWithPath: VolumeLocator.preferredScanRoot(for: requested.path(percentEncoded: false)), isDirectory: true)
         cancelScan()
         scanGeneration += 1
@@ -393,7 +466,7 @@ final class AppModel {
         scanRoot = url
         phase = .scanning
         progress = nil
-        let options = ScanOptions(root: url, staysOnVolume: staysOnVolume)
+        let options = ScanOptions(root: url, staysOnVolume: staysOnVolume, cloudScanMode: cloudMode)
         let rootPath = PathUtilities.standardize(url.path(percentEncoded: false))
         let identity = RootIdentity.capture(path: rootPath)
         let startBaseline = VolumeBaseline.capture(forPath: rootPath)
@@ -881,7 +954,19 @@ final class AppModel {
     }
 
     var scanLabels: [ScanLabel] {
-        reconciliation.map { ScanLabel.labels(for: $0, restoredAt: context?.restoredAt) } ?? []
+        guard var labels = reconciliation.map({ ScanLabel.labels(for: $0, restoredAt: context?.restoredAt) }),
+              let result = lastResult else { return [] }
+        let cloudLabel: ScanLabel
+        switch result.options.cloudScanMode {
+        case .legacyUnspecified:
+            cloudLabel = .legacyCloudBehavior
+        case .localOnly:
+            cloudLabel = .localFilesOnly(placeholders: result.issueCounts[.cloudPlaceholder] ?? 0)
+        case .cloudCatalog:
+            cloudLabel = .cloudCatalog
+        }
+        labels.insert(cloudLabel, at: min(1, labels.count))
+        return labels
     }
 
     /// Reads the volume figures again, for the "Changed since scan" comparison.

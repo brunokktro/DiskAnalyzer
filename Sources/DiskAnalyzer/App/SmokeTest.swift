@@ -71,6 +71,8 @@ struct SmokeTest: Equatable {
             facts["items"] = tree.root.itemCount
             facts["issues"] = Dictionary(uniqueKeysWithValues: result.issueCounts.map { ($0.key.rawValue, $0.value) })
             facts["scan_ms"] = Double(result.statistics.duration.components.attoseconds) / 1e15 + Double(result.statistics.duration.components.seconds) * 1000
+            facts["cloud_scan_mode"] = result.options.cloudScanMode.rawValue
+            checks["local_only_is_default"] = result.options.cloudScanMode == .localOnly
 
             let rows = model.rows
             facts["top_level_rows"] = rows.map(\.name)
@@ -194,6 +196,24 @@ struct SmokeTest: Equatable {
                 facts["rescanned_folders"] = model.context?.rescannedFolders ?? []
             }
 
+            // Rescan All is a decision, not an immediate traversal.
+            let startsBeforePlan = model.scanStartCount
+            model.rescan()
+            checks["rescan_all_requires_confirmation"] = model.pendingScan != nil
+                && model.scanStartCount == startsBeforePlan && !model.isScanning
+            checks["scan_plan_has_duration_estimate"] = model.pendingScanEstimate != nil
+            checks["scan_plan_shows_last_scan_time"] = model.pendingScan?.lastScannedAt == result.finishedAt
+            try? await Task.sleep(for: .milliseconds(400))
+            let planWindow = NSApp.windows.first { $0.isVisible && $0.sheetParent != nil }
+            checks["scan_plan_visible"] = planWindow != nil
+            await capture("scan-plan", window: planWindow, facts: &facts)
+            model.pendingCloudMode = .cloudCatalog
+            model.cancelPendingScan()
+            model.rescan()
+            checks["new_scan_returns_to_local_only"] = model.pendingCloudMode == .localOnly
+            model.cancelPendingScan()
+            checks["cancelled_scan_plan_starts_nothing"] = model.pendingScan == nil && model.scanStartCount == startsBeforePlan
+
             // Storage Settings: the recording opener checks that macOS handles the pane URL,
             // records the request and opens nothing.
             model.openStorageSettings()
@@ -263,6 +283,11 @@ struct SmokeTest: Equatable {
         }
         checks["restored_rescanned_folders"] = (model.context?.rescannedFolders ?? []) == (expected["rescanned_folders"] as? [String] ?? [])
         checks["recent_scans_listed"] = model.recentScans.count == 1
+        if let root = model.tree?.rootPath {
+            model.openRoot(URL(fileURLWithPath: root, isDirectory: true))
+            checks["home_style_navigation_does_not_scan"] = model.scanStartCount == 0 && !model.isScanning
+                && model.pendingScan == nil && model.focus == FileTree.rootID
+        }
         facts["scan_labels"] = model.scanLabels.map(\.title)
         checks["restored_label_shown"] = model.scanLabels.contains { if case .restored = $0 { true } else { false } }
         await capture("restored", window: window, facts: &facts)

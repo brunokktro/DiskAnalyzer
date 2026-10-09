@@ -40,7 +40,9 @@ struct SidebarView: View {
                     LabeledContent("Files", value: SizeFormatting.count(Int64(result.statistics.files)))
                     LabeledContent("Folders", value: SizeFormatting.count(Int64(result.statistics.directories)))
                     LabeledContent("Duration", value: result.statistics.duration.formatted(.units(allowed: [.minutes, .seconds, .milliseconds], width: .narrow, maximumUnitCount: 2)))
+                    LabeledContent("Cloud", value: result.options.cloudScanMode.title)
                     LabeledContent("Scanned", value: result.finishedAt.formatted(date: .abbreviated, time: .shortened))
+                    LabeledContent("Age", value: result.finishedAt.formatted(.relative(presentation: .named)))
                     Button("Space Reconciliation…", systemImage: "chart.bar.doc.horizontal") { model.showReconciliation() }
                         .buttonStyle(.borderless)
                         .disabled(model.reconciliation == nil)
@@ -108,7 +110,7 @@ private struct VolumeRow: View {
             }
         }
         .buttonStyle(.plain)
-        .help("Scan \(volume.scanPath) (\(volume.fileSystemType))")
+        .help("Open saved results for \(volume.name), or plan a scan of \(volume.scanPath)")
     }
 }
 
@@ -261,7 +263,7 @@ struct WelcomeView: View {
             }
             HStack(spacing: 12) {
                 Button { model.scanHome() } label: {
-                    Label("Scan Home Folder", systemImage: "house").frame(minWidth: 160)
+                    Label("Open Home Folder", systemImage: "house").frame(minWidth: 160)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
@@ -361,6 +363,8 @@ private struct RecentScanRow: View {
                     .lineLimit(1).truncationMode(.middle)
                 Text("\(SizeFormatting.string(scan.summary.allocatedBytes)) · \(scan.summary.savedAt.formatted(.relative(presentation: .named)))")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("Scanned \(scan.summary.finishedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2).foregroundStyle(.tertiary)
                 if !scan.summary.isCompatible {
                     Label("Saved by another version", systemImage: "questionmark.circle")
                         .font(.caption).foregroundStyle(.secondary)

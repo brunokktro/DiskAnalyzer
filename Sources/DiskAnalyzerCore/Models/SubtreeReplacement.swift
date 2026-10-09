@@ -270,8 +270,10 @@ public enum SubtreeRescan {
         guard let id = snapshot.tree.nodeID(forPath: folder) else { throw SubtreeReplacementError.notInTree(folder) }
         guard canRescan(id, in: snapshot.tree) else { throw SubtreeReplacementError.notAFolder(folder) }
         let previous = snapshot.result.options
+        let rescanMode: CloudScanMode = previous.cloudScanMode == .legacyUnspecified ? .localOnly : previous.cloudScanMode
         let options = ScanOptions(root: URL(fileURLWithPath: folder, isDirectory: true), staysOnVolume: previous.staysOnVolume,
-                                  excludedPaths: previous.excludedPaths, detectsPackages: previous.detectsPackages,
+                                  excludedPaths: previous.excludedPaths, cloudScanMode: rescanMode,
+                                  detectsPackages: previous.detectsPackages,
                                   maxRecordedIssues: previous.maxRecordedIssues, progressInterval: previous.progressInterval)
         var rescan = try await scanner(options, progress)
         try Task.checkCancellation()

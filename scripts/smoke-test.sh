@@ -98,5 +98,16 @@ if [[ -n "${SNAPSHOT:-}" ]]; then
     alpha="$(sips -g hasAlpha "$image" 2>/dev/null)"
     grep -q 'hasAlpha: no' <<<"$alpha" || { echo "screenshot is not opaque: $image" >&2; exit 1; }
   done
+  plan="$BASE-scan-plan.png"
+  [[ -s "$plan" ]] || { echo "missing smoke screenshot: $plan" >&2; exit 1; }
+  plan_dimensions="$(sips -g pixelWidth -g pixelHeight "$plan" 2>/dev/null)"
+  plan_width="$(awk '/pixelWidth:/ {print $2}' <<<"$plan_dimensions")"
+  plan_height="$(awk '/pixelHeight:/ {print $2}' <<<"$plan_dimensions")"
+  [[ "${plan_width:-0}" -ge 500 && "${plan_height:-0}" -ge 400 ]] || {
+    echo "scan-plan screenshot is too small: $plan (${plan_width:-?}x${plan_height:-?})" >&2; exit 1;
+  }
+  grep -q 'hasAlpha: no' <<<"$(sips -g hasAlpha "$plan" 2>/dev/null)" || {
+    echo "scan-plan screenshot is not opaque: $plan" >&2; exit 1;
+  }
 fi
 echo "smoke test passed"

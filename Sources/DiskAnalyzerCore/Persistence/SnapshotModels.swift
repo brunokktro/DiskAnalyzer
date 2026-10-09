@@ -69,7 +69,7 @@ public struct SnapshotSummary: Sendable, Hashable, Identifiable {
     public let formatVersion: Int
 
     /// Written in a tree format this build can read.
-    public var isCompatible: Bool { formatVersion == TreeCodec.formatVersion }
+    public var isCompatible: Bool { TreeCodec.isSupported(formatVersion) }
     public var isPartial: Bool { failureCount > 0 }
 }
 

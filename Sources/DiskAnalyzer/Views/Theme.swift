@@ -61,6 +61,7 @@ struct FlagBadges: View {
                 badge("link", "Hard link, counted once elsewhere")
             }
             if flags.contains(.invalidName) { badge("questionmark.square.dashed", "Name is not valid UTF-8; Finder actions are disabled") }
+            if flags.contains(.cloudPlaceholder) { badge("icloud.and.arrow.down", "Cloud placeholder; content was not downloaded") }
             if flags.contains(.otherVolume) { badge("externaldrive", "Another volume, not scanned") }
             if flags.contains(.excluded) { badge("minus.circle", "Excluded from the scan") }
             if flags.contains(.hidden) { badge("eye.slash", "Hidden") }

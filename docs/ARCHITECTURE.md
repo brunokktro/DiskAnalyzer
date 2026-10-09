@@ -46,9 +46,31 @@ For every entry fts already performed an `lstat(2)`; the scanner copies `st_size
 `st_mtimespec`, `st_nlink`, `st_dev`, `st_ino` and `st_flags`. It never opens a regular file, which
 a test proves by measuring a file with mode `000`.
 
+Before the walk, `DatalessMaterializationPolicy` records the worker thread's current
+`IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES` policy. Both current modes set
+`IOPOL_MATERIALIZE_DATALESS_FILES_OFF`, read it back and fail closed if macOS did not apply it, so
+neither mode permits regular-file content hydration. In **Local files only**, a directory with
+`SF_DATALESS` receives `FTS_SKIP` before its children are requested, while a dataless file remains
+visible but contributes zero logical and allocated bytes. Placeholder files increment an exact
+counter without consuming the 5,000-row detailed-issue budget. **Include cloud catalog** permits
+dataless-directory traversal, so File Provider can enumerate remote directory metadata; dataless
+file content is still protected, but remote logical sizes are included. The original thread policy
+is restored by `defer`, including cancellation and errors.
+
+`ScanDurationEstimate` is intentionally a range, not a deadline. For the same root it uses the
+previous measured duration. On a first scan it selects a conservative range from current volume
+usage; an arbitrary folder uses that as an upper-bound scope. Cloud-catalog ranges are wider because
+provider latency and remote item count are unknown. The confirmation UI names item count, SSD speed,
+permissions, system load and provider response as the variables the byte estimate cannot model.
+
+`AppModel.openRoot` makes Home and volume entries navigation targets: the current tree or matching
+saved snapshot opens immediately. Without one it creates a `ScanProposal`; no scanner task exists
+until **Start Scan** is confirmed. **Rescan All** and **Scan as New Root** use the same plan. The plan
+shows the exact previous scan time, relative age, estimated scope, duration range and cloud mode.
+
 | fts info | Meaning | Scanner action |
 |----------|---------|----------------|
-| `FTS_D` | directory, pre-order | create node; skip subtree if its `(st_dev, st_ino)` was already visited, if on another device, or if excluded |
+| `FTS_D` | directory, pre-order | create node; in local-only mode skip `SF_DATALESS`, otherwise skip if its `(st_dev, st_ino)` was already visited, if on another device, or if excluded |
 | `FTS_DP` | directory, post-order | ignored (aggregation happens after the walk) |
 | `FTS_F` | regular file | create node; detect duplicate hard links by `(st_dev, st_ino)` |
 | `FTS_SL`, `FTS_SLNONE` | symbolic link | create node, never followed |
@@ -233,12 +255,12 @@ package). It opens the file on first use, so launching does no I/O on the main t
   finished scan, finished folder rescan and Trash move, one save after another.
 - **TreeCodec** writes the arena as it is (little-endian, length-prefixed UTF-8 names), then the
   sparse `FileTree.linkInodes` list (node id and `st_ino` of each file that had more than one link,
-  ids ascending; format version 2). Decoding checks every length against the bytes left, then
-  validates what the UI relies on: parents before children, child ranges inside the index, each
-  child listed exactly once under its real parent, every size and item count in `0...2^56`, every
-  date a finite number, no folder smaller than the sum of its live, counted children, and every
-  link inode on a file, each node at most once. A tree in another `formatVersion` is listed as
-  incompatible and never decoded.
+  ids ascending; newly written format version 3, with version 2 still accepted). Decoding checks
+  every length against the bytes left, then validates what the UI relies on: parents before children,
+  child ranges inside the index, each child listed exactly once under its real parent, every size and
+  item count in `0...2^56`, every date a finite number, no folder smaller than the sum of its live,
+  counted children, and every link inode on a file, each node at most once. A tree in an unsupported
+  `formatVersion` is listed as incompatible and never decoded.
 - **The row checksum** detects damage anywhere in the row, not only in the tree. It is not a
   signature (anyone can recompute it), so `SnapshotDetails` also range-checks what it decodes:
   statistics and issue counts, the duration, the finish date, both baselines and the folder-rescan

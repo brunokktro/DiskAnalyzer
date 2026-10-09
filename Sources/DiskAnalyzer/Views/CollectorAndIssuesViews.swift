@@ -117,7 +117,7 @@ struct IssuesView: View {
                     }
                 }
                 if result.issues.count < result.totalIssueCount {
-                    Text("Showing the first \(result.issues.count) of \(result.totalIssueCount) entries.")
+                    Text("Showing \(result.issues.count) path details for \(result.totalIssueCount) counted items. Cloud placeholder files are marked in the tree instead of repeated here.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Table(result.issues) {

@@ -37,6 +37,9 @@ public struct NodeFlags: OptionSet, Sendable, Hashable {
     /// (`/Users` and `/System/Volumes/Data/Users` are one folder) or a hard-linked folder.
     /// Not entered, and always set together with ``hardLinkDuplicate`` so it is never summed.
     public static let alreadyCounted = NodeFlags(rawValue: 1 << 8)
+    /// File Provider item whose contents are not local. In local-only mode, a dataless
+    /// directory also carries `excluded` because its descendants were intentionally not enumerated.
+    public static let cloudPlaceholder = NodeFlags(rawValue: 1 << 9)
 
     /// Flags meaning the scan did not measure what is inside this node: its sizes are a
     /// lower bound (often zero), so it must not be offered for the Trash as if they were real.

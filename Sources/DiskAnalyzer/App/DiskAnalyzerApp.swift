@@ -53,7 +53,7 @@ struct AppCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("Scan Home Folder") { model.scanHome() }
+            Button("Open Home Folder") { model.scanHome() }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
             Button("Scan Folder…") { model.chooseFolder() }
                 .keyboardShortcut("o")

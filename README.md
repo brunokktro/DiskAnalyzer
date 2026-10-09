@@ -6,7 +6,10 @@ the result as a size-sorted hierarchy and squarified treemap, rank the biggest f
 files separately, inspect the Trash, filter, preview with Quick Look, reveal in Finder and,
 if you choose to, move items to the Trash.
 
-- **Metadata only.** The scan reads `lstat(2)` information and never opens file contents.
+- **Metadata only, cloud-safe by default.** The scan reads `lstat(2)` information and never opens
+  file contents. **Local files only** blocks dataless materialization, excludes remote placeholder
+  bytes and skips directories that the provider marks dataless; **Include cloud catalog** is an
+  explicit opt-in that may grow File Provider metadata caches.
 - **Nothing is deleted permanently.** The only destructive action is an explicit,
   confirmed **Move to Trash**, which you can undo from the Trash.
 - **Honest numbers.** Both *allocated* and *logical* sizes are shown, hard links are counted
@@ -18,6 +21,10 @@ if you choose to, move items to the Trash.
 Requires macOS 14 Sonoma or later. Apple silicon and Intel (`--universal` build).
 
 ## Screenshots
+
+### Full-scan plan
+
+![Disk Analyzer showing the duration estimate and cloud coverage choice before a full scan](docs/screenshots/scan-plan.png)
 
 ### Explore and treemap
 
@@ -45,10 +52,12 @@ Requires macOS 14 Sonoma or later. Apple silicon and Intel (`--universal` build)
 |------|--------------|
 | Scan roots | Home folder, any mounted volume (the system volume maps to its Data volume), or any folder via the Open panel |
 | Scanning | Asynchronous, cancellable at any time (⌘.), live progress, stays on one volume by default like `du -x` (File > Stay on One Volume) |
-| Rescanning | **Rescan All** (⌘R) scans the whole root again. **Rescan This Folder** (⇧⌘R or right-click) rescans one folder and swaps it in only when that scan finishes; stopping it keeps the previous results. **Scan as New Root** starts a full scan at a folder |
-| Saved scans | The last scan of each root is saved and the most recent one is shown at launch, without scanning. **Recent Scans** in the sidebar lists up to 10 roots; a folder that was renamed, replaced, or is on a disconnected volume says so and is not opened |
+| Before a full scan | A plan shows the root, last scan date and age, estimated scope and a broad duration range. A previous scan calibrates the range; otherwise it uses current volume usage. Item count, SSD speed, permissions, system load and File Provider latency can move the result inside or beyond that range |
+| Cloud files | Both modes apply and verify `IOPOL_MATERIALIZE_DATALESS_FILES_OFF`. **Local files only** is the default: remote placeholder bytes contribute zero and dataless folders are not entered. **Include cloud catalog** enumerates File Provider directory metadata and includes remote logical sizes without opening file contents; OneDrive, WorkDocs or iCloud metadata caches may grow |
+| Rescanning | **Rescan All** (⌘R) first shows the plan and scans the whole root only after confirmation. **Rescan This Folder** (⇧⌘R or right-click) rescans one folder in the snapshot's existing cloud mode and swaps it in only when that scan finishes; stopping it keeps the previous results. **Scan as New Root** plans a full scan at a folder |
+| Saved scans | The last scan of each root is saved and the most recent one is shown at launch, without scanning. Clicking Home or a volume opens its existing snapshot; it never silently starts another scan. **Recent Scans** lists up to 10 roots with exact scan time and relative age |
 | Space Reconciliation | ⌥⌘S: the volume's used, available and purgeable space next to what the scan measured, what is not attributed or shared, what was not readable, and how much the volume changed during and since the scan. Opens macOS Storage settings |
-| Status labels | Complete or Partial, Whole volume or Folder only, Changed since scan, Stale, Restored; each with a symbol and an explanation |
+| Status labels | Complete or Partial, Local files only or Cloud catalog included, Legacy cloud behavior unknown, Whole volume or Folder only, Changed since scan, Stale, Restored; each with a symbol and an explanation |
 | Sizes | **Allocated** (`st_blocks × 512`) and **Logical** (`st_size`), switchable everywhere |
 | Hierarchy | Folder listing with share bars, largest sibling first by default, sortable columns, breadcrumb navigation, ⌘↑ / ⌘↓ |
 | Biggest folders | Top 500 ordinary folders below the current location, ranked globally by allocated or logical subtree size; locations, item counts, drill-down and CSV export. The sidebar keeps the five biggest top-level folders visible and labels folders over 25% or 50% of the scan |
@@ -79,19 +88,23 @@ To sign with your own identity: `SIGN_IDENTITY="Developer ID Application: …" s
 
 ## Using it
 
-1. Choose **Scan Home Folder**, a volume in the sidebar, or **Choose Folder…** (⌘O). Next time
-   you open the app, the last results are already there; use **Rescan All** (⌘R) when you want
-   fresh numbers.
-2. Explore: double-click folders or treemap tiles to go deeper, use the breadcrumb or ⌘↑ to go back.
-3. Switch **Allocated / Logical** in the toolbar. Open **Biggest Folders** (⌘2) for the
+1. Click **Home Folder**, a volume in the sidebar, or **Choose Folder…** (⌘O). If that root
+   already has a snapshot, Disk Analyzer opens it and shows the exact scan time and age. It does
+   not scan again. Without a snapshot, or after **Rescan All** (⌘R), review the time estimate and
+   choose **Local files only** or **Include cloud catalog**, then confirm **Start Scan**.
+2. Prefer **Local files only** to analyze space physically represented on the Mac without entering
+   dataless cloud folders. Choose **Include cloud catalog** only when remote placeholder metadata is
+   useful enough to justify a longer scan and possible growth of the provider's metadata cache.
+3. Explore: double-click folders or treemap tiles to go deeper, use the breadcrumb or ⌘↑ to go back.
+4. Switch **Allocated / Logical** in the toolbar. Open **Biggest Folders** (⌘2) for the
    global folder ranking or **Biggest Files** (⌘3) for files and packages.
-4. Use the **Trash** card in the sidebar to see its measured size, drill into it or rescan only
+5. Use the **Trash** card in the sidebar to see its measured size, drill into it or rescan only
    the Trash. After Disk Analyzer moves something there, the card requires a rescan instead of
    presenting the previous total as current.
-5. Right-click anything for Quick Look, Reveal in Finder, **Add to Collector**, **Rescan This
+6. Right-click anything for Quick Look, Reveal in Finder, **Add to Collector**, **Rescan This
    Folder** or **Scan as New Root**.
-6. Open the Collector (⌥⌘C), review, then **Move to Trash…** and confirm.
-7. To see why the volume's used space differs from the scan, open **Space Reconciliation** (⌥⌘S).
+7. Open the Collector (⌥⌘C), review, then **Move to Trash…** and confirm.
+8. To see why the volume's used space differs from the scan, open **Space Reconciliation** (⌥⌘S).
 
 ### Full Disk Access
 
@@ -100,6 +113,42 @@ from apps that do not have **Full Disk Access**. Disk Analyzer reports those fol
 *Blocked by macOS privacy protection* and shows the count in the status bar. If you want them
 measured, add the app in **System Settings > Privacy & Security > Full Disk Access** and rescan.
 The app works without it.
+
+### Cloud folders
+
+OneDrive, WorkDocs Drive, iCloud Drive and other File Provider domains can contain files and
+folders that exist only as placeholders. Both modes apply and read back
+`IOPOL_MATERIALIZE_DATALESS_FILES_OFF`, so Disk Analyzer keeps file contents untouched:
+
+- **Local files only** is the default. The scanner detects `SF_DATALESS`, skips a dataless directory
+  before descending into it, and lists dataless files with zero logical and allocated bytes. The
+  folder is listed as *Cloud placeholder not downloaded*, never as a trustworthy empty folder. The
+  result is a safe lower-bound view of local disk use.
+- **Include cloud catalog** allows directory traversal so File Provider can enumerate remote
+  placeholder metadata. It still does not open regular-file contents, but directory listings and
+  provider metadata may be cached locally. Remote placeholder logical sizes are included even when
+  they consume no allocated space on the Mac.
+
+The second mode is explicit because a recursive cloud catalog can be much slower and can increase
+metadata cache usage. It is not required to inspect storage already allocated locally.
+
+### Full-scan time estimate
+
+Before **Start Scan**, the app shows a range for that root. If the same root was scanned before, the
+previous measured duration calibrates the range. Otherwise, it uses this conservative first-scan
+baseline from the volume's used space:
+
+| Used space | Local files only | Include cloud catalog |
+|------------|------------------|-----------------------|
+| Under 50 GB | under 1 min to 5 min | 5 to 20 min |
+| 50 to 250 GB | 1 to 10 min | 5 to 40 min |
+| 250 to 500 GB | 3 to 20 min | 6 min to about 1.5 hr |
+| 500 GB to 1 TB | 8 to 40 min | 16 min to about 3 hr |
+| Over 1 TB | 20 min to about 1.5 hr | 40 min to 4 hr |
+
+These are planning ranges, not an SLA. A million tiny files takes longer than a few large files with
+the same used size. SSD speed, permissions, current system load and provider latency also matter.
+For an arbitrary folder without a saved snapshot, volume usage is shown as an upper-bound scope.
 
 ## What the numbers mean
 
@@ -148,7 +197,7 @@ cross-check them. Details in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#size-se
 ## Product references and deliberate scope
 
 Disk Analyzer uses the strongest ideas from the two products that motivated it, adapted to a
-native and local-only macOS app rather than copied feature for feature.
+native, on-device macOS app rather than copied feature for feature.
 
 | Reference | Adopted here |
 |-----------|--------------|
@@ -158,14 +207,14 @@ native and local-only macOS app rather than copied feature for feature.
 This release intentionally does not copy TreeSize's Windows/network administration, scheduled
 reports or bulk rename, and does not copy Diskaroo's account system, permanent deletion, sunburst
 or content-reading duplicate finder. Those are separate product decisions. The scanner remains
-metadata-only, the app remains local-only, and removal remains reversible through the Trash.
+metadata-only, the app makes no network requests of its own, and removal remains reversible through the Trash.
 
 ## Development
 
 ```bash
-scripts/test.sh                   # 217 unit and integration tests (Swift Testing)
+scripts/test.sh                   # 230 unit and integration tests (Swift Testing)
 scripts/package-app.sh            # release build + .app bundle
-scripts/smoke-test.sh             # packaged app, relaunch, 49 checks and 6 opaque screenshots
+scripts/smoke-test.sh             # packaged app, relaunch, 57 checks and 7 opaque screenshots
 scripts/make-fixture.sh /tmp/da   # writes the test fixture tree for manual exploration
 ```
 

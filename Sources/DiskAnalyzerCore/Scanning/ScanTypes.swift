@@ -9,6 +9,8 @@ public struct ScanOptions: Sendable, Hashable {
     public var staysOnVolume: Bool
     /// Absolute paths whose subtree is skipped. Standardized on use.
     public var excludedPaths: Set<String>
+    /// How File Provider placeholders are handled. Local-only is the safe default.
+    public var cloudScanMode: CloudScanMode
     /// Ask Launch Services whether directories with an extension are packages.
     public var detectsPackages: Bool
     /// Upper bound of individual issues kept in memory. Counters keep counting past it.
@@ -20,6 +22,7 @@ public struct ScanOptions: Sendable, Hashable {
         root: URL,
         staysOnVolume: Bool = true,
         excludedPaths: Set<String> = [],
+        cloudScanMode: CloudScanMode = .localOnly,
         detectsPackages: Bool = true,
         maxRecordedIssues: Int = 5_000,
         progressInterval: Duration = .milliseconds(100)
@@ -27,6 +30,7 @@ public struct ScanOptions: Sendable, Hashable {
         self.root = root
         self.staysOnVolume = staysOnVolume
         self.excludedPaths = excludedPaths
+        self.cloudScanMode = cloudScanMode
         self.detectsPackages = detectsPackages
         self.maxRecordedIssues = maxRecordedIssues
         self.progressInterval = progressInterval
@@ -61,6 +65,8 @@ public struct ScanIssue: Sendable, Hashable, Identifiable {
         case excluded
         /// File name is not valid UTF-8; shown with replacement characters and not actionable.
         case invalidName
+        /// A File Provider placeholder that local-only mode deliberately did not materialize.
+        case cloudPlaceholder
         /// Folder already reached through another path (APFS firmlink or hard-linked folder).
         /// Counted once, where it was first found, and not entered again.
         case alreadyCounted
@@ -74,6 +80,7 @@ public struct ScanIssue: Sendable, Hashable, Identifiable {
             case .otherVolume: "Other volume (not entered)"
             case .excluded: "Excluded"
             case .invalidName: "Invalid file name encoding"
+            case .cloudPlaceholder: "Cloud placeholder not downloaded"
             case .alreadyCounted: "Already counted at another path"
             }
         }
@@ -82,7 +89,7 @@ public struct ScanIssue: Sendable, Hashable, Identifiable {
         public var isFailure: Bool {
             switch self {
             case .permissionDenied, .notPermitted, .unreadable, .cycle, .invalidName: true
-            case .otherVolume, .excluded, .alreadyCounted: false
+            case .otherVolume, .excluded, .cloudPlaceholder, .alreadyCounted: false
             }
         }
 
@@ -137,12 +144,14 @@ public struct ScanResult: Sendable {
 public enum ScanError: Error, Equatable, LocalizedError {
     case notADirectory(String)
     case cannotOpen(String, Int32)
+    case cannotConfigureCloudPolicy(Int32)
     case tooManyItems
 
     public var errorDescription: String? {
         switch self {
         case .notADirectory(let path): "“\(path)” is not a folder."
         case .cannotOpen(let path, let code): "Could not open “\(path)”: \(String(cString: strerror(code)))."
+        case .cannotConfigureCloudPolicy(let code): "Could not enforce the cloud-file safety policy: \(String(cString: strerror(code))). No scan was started."
         case .tooManyItems: "The folder holds more items than Disk Analyzer can index in one scan."
         }
     }

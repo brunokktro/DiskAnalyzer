@@ -45,7 +45,8 @@ docs/ARCHITECTURE.md
 
 1. **The scanner is metadata-only.** Never open, read or hash file contents in
    `DiskAnalyzerCore`. Quick Look is the only feature that reads contents, and it runs on demand
-   in a system process.
+   in a system process. Local-only scans must keep the dataless materialization policy off and
+   must never descend into a node marked `SF_DATALESS`.
 2. **No permanent deletion.** The only removal path is `TrashOperation` through `TrashPolicy`
    and `FileManager.trashItem`. Do not add `removeItem`, `unlink` or similar on user data.
 3. **Tests never touch the real Trash, the real saved scans or System Settings.** Use
@@ -60,7 +61,9 @@ docs/ARCHITECTURE.md
 7. **Saved data is never deleted to recover.** A damaged or unknown database is moved aside. Bump
    `SnapshotSchema.version` with an upgrade step for every schema change, and
    `TreeCodec.formatVersion` for every tree layout change.
-8. **Nothing scans on its own.** Launch restores saved results; every scan starts from a user action.
+8. **Nothing scans on its own.** Launch restores saved results. Home, volumes and chosen roots
+   open an existing snapshot when one exists; otherwise they show a scan plan. A full scan starts
+   only after the user reviews its time range and cloud mode and confirms **Start Scan**.
 
 ## Toolchain notes
 
@@ -92,11 +95,11 @@ It scans the folder through the real `AppModel`, exercises navigation, filters, 
 Biggest Folders, Biggest Files, explicit Trash sizing and navigation, the Collector-to-Trash flow
 with a recording mover (nothing is moved), saving, Rescan This Folder (finished and cancelled) and
 Storage Settings with a recording opener, writes the report and exits with 0 on success, 1 on a
-failed check, 2 on timeout. When `SNAPSHOT` is set, the harness requires six opaque 1280×800 PNGs:
-Explore, Biggest Folders, Biggest Files, Trash, Collector and Restored.
-`--smoke-restore <first-report.json> --smoke-report <file.json> --smoke-store <db>` relaunches on
-the same saved-scans file and checks the restored totals and that no scan started.
-`scripts/smoke-test.sh` runs both.
+failed check, 2 on timeout. `--smoke-restore <first-report.json> --smoke-report <file.json> --smoke-store <db>`
+relaunches on the same saved-scans file and checks the restored totals,
+ that Home-style navigation opens the
+snapshot without scanning, and that no scan started. When `SNAPSHOT` is set, the harness requires
+seven opaque PNGs: six 1280×800 app views plus the scan-plan sheet. `scripts/smoke-test.sh` runs both phases.
 
 ## Pull requests
 

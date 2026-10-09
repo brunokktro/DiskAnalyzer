@@ -164,6 +164,9 @@ public struct SpaceReconciliation: Sendable, Hashable {
 public enum ScanLabel: Sendable, Hashable {
     case complete
     case partial(failures: Int)
+    case localFilesOnly(placeholders: Int)
+    case cloudCatalog
+    case legacyCloudBehavior
     case wholeVolume
     case folderOnly
     case changedSinceScan(delta: Int64)
@@ -175,6 +178,9 @@ public enum ScanLabel: Sendable, Hashable {
         switch self {
         case .complete: "Complete"
         case .partial: "Partial"
+        case .localFilesOnly(let placeholders): placeholders > 0 ? "Local only, cloud skipped" : "Local files only"
+        case .cloudCatalog: "Cloud catalog included"
+        case .legacyCloudBehavior: "Legacy, cloud behavior unknown"
         case .wholeVolume: "Whole volume"
         case .folderOnly: "Folder only"
         case .changedSinceScan: "Changed since scan"
@@ -186,9 +192,15 @@ public enum ScanLabel: Sendable, Hashable {
 
     public var detail: String {
         switch self {
-        case .complete: "Every folder in the scan was read."
+        case .complete: "Every folder in the selected scan mode was read."
         case .partial(let failures): "\(failures) \(failures == 1 ? "item" : "items") could not be read, so totals are a lower bound."
-        case .wholeVolume: "The scan covers the whole volume and is compared with its used space."
+        case .localFilesOnly(let placeholders):
+            placeholders > 0
+                ? "\(placeholders) cloud \(placeholders == 1 ? "placeholder remained" : "placeholders remained") dataless and contributed zero bytes to local-only totals. Dataless folders were not traversed."
+                : "Dataless cloud folders were protected from enumeration and download."
+        case .cloudCatalog: "File Provider folder metadata was included. File contents were not opened, but provider metadata caches may have grown."
+        case .legacyCloudBehavior: "This snapshot predates cloud-mode tracking. Run Rescan All to get results with known cloud coverage."
+        case .wholeVolume: "The scan covers the whole volume within the selected cloud mode and is compared with its used space."
         case .folderOnly: "The scan covers one folder. It is never compared with the volume's used space."
         case .changedSinceScan(let delta): "The volume's used space moved by \(SizeFormatting.signed(delta)) more than the results account for."
         case .stale(let delta): "The volume's used space moved by \(SizeFormatting.signed(delta)) more than the results account for. Rescan for current results."
@@ -201,6 +213,9 @@ public enum ScanLabel: Sendable, Hashable {
         switch self {
         case .complete: "checkmark.seal"
         case .partial: "exclamationmark.triangle"
+        case .localFilesOnly: "externaldrive.badge.checkmark"
+        case .cloudCatalog: "icloud"
+        case .legacyCloudBehavior: "questionmark.folder"
         case .wholeVolume: "internaldrive"
         case .folderOnly: "folder"
         case .changedSinceScan: "arrow.triangle.2.circlepath"

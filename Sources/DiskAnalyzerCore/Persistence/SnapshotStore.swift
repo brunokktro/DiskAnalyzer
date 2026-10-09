@@ -211,7 +211,7 @@ public actor SnapshotStore {
             try query.bind(1, id)
             guard try query.step() else { throw SnapshotStoreError.notFound }
             let version = Int(clamping: query.int64(9))
-            guard version == TreeCodec.formatVersion else { throw SnapshotStoreError.incompatible(version) }
+            guard TreeCodec.isSupported(version) else { throw SnapshotStoreError.incompatible(version) }
             guard let row = SavedRow(query) else { throw SnapshotStoreError.unreadable("missing fields") }
             return try row.snapshot()
         } catch let error as SnapshotStoreError {
@@ -416,7 +416,7 @@ public actor SnapshotStore {
                 unreadable += 1
                 break
             }
-            guard let row = SavedRow(rows), row.formatVersion == Int64(TreeCodec.formatVersion), (try? row.snapshot()) != nil
+            guard let row = SavedRow(rows), TreeCodec.isSupported(Int(row.formatVersion)), (try? row.snapshot()) != nil
             else { unreadable += 1; continue }
             do {
                 let insert = try db.prepare("INSERT OR IGNORE INTO snapshots (\(SavedRow.columns)) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -608,6 +608,8 @@ struct SnapshotDetails: Codable {
 
     let staysOnVolume: Bool
     let excludedPaths: [String]
+    /// Absent in snapshots written before cloud-safe scan modes existed.
+    let cloudScanMode: String?
     let detectsPackages: Bool
     let finishedAt: Date
     let issues: [Issue]
@@ -623,6 +625,7 @@ struct SnapshotDetails: Codable {
         let result = snapshot.result
         staysOnVolume = result.options.staysOnVolume
         excludedPaths = result.options.excludedPaths.sorted()
+        cloudScanMode = result.options.cloudScanMode.rawValue
         detectsPackages = result.options.detectsPackages
         finishedAt = result.finishedAt
         issues = result.issues.map { Issue(path: $0.path, kind: $0.kind.rawValue, errorCode: $0.errorCode) }
@@ -669,8 +672,17 @@ struct SnapshotDetails: Codable {
         stats.hardLinkDuplicates = statistics.hardLinkDuplicates
         stats.foldersAlreadyCounted = statistics.foldersAlreadyCounted
         stats.duration = .milliseconds(Int64((statistics.durationSeconds * 1000).rounded()))
+        let mode: CloudScanMode
+        if let cloudScanMode {
+            guard let decoded = CloudScanMode(rawValue: cloudScanMode) else {
+                throw TreeCodec.DecodeError.invalidStructure("cloud scan mode")
+            }
+            mode = decoded
+        } else {
+            mode = .legacyUnspecified
+        }
         let options = ScanOptions(root: URL(fileURLWithPath: tree.rootPath, isDirectory: true), staysOnVolume: staysOnVolume,
-                                  excludedPaths: Set(excludedPaths), detectsPackages: detectsPackages)
+                                  excludedPaths: Set(excludedPaths), cloudScanMode: mode, detectsPackages: detectsPackages)
         let result = ScanResult(tree: tree, options: options, issues: decodedIssues, issueCounts: counts,
                                 statistics: stats, finishedAt: finishedAt)
         return ScanSnapshot(result: result, root: root, scope: scope, startBaseline: startBaseline,

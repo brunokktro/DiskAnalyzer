@@ -20,6 +20,7 @@ struct ContentView: View {
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
         }
         .quickLookPreview($model.quickLookURL)
+        .sheet(isPresented: scanPlanBinding) { ScanPlanView(model: model) }
         .sheet(isPresented: $model.isIssuesPresented) { IssuesView(model: model) }
         .sheet(isPresented: $model.isReconciliationPresented) { ReconciliationView(model: model) }
         .confirmationDialog(trashTitle, isPresented: $model.isTrashConfirmationPresented, titleVisibility: .visible) {
@@ -46,6 +47,10 @@ struct ContentView: View {
         } else {
             WelcomeView(model: model)
         }
+    }
+
+    private var scanPlanBinding: Binding<Bool> {
+        Binding(get: { model.pendingScan != nil }, set: { if !$0 { model.cancelPendingScan() } })
     }
 
     private var trashTitle: String {
@@ -298,7 +303,7 @@ private extension ScanLabel {
     /// Labels that change how far the numbers can be trusted right now.
     var isStatusBarWorthy: Bool {
         switch self {
-        case .changedSinceScan, .stale, .restored: true
+        case .changedSinceScan, .stale, .restored, .legacyCloudBehavior: true
         default: false
         }
     }

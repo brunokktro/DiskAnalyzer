@@ -12,9 +12,11 @@ import Foundation
 /// ``decode(_:)`` checks every bound and the whole parent/child structure, so a damaged or
 /// crafted blob throws instead of producing a tree that would crash on navigation.
 public enum TreeCodec {
-    /// Bump when the layout changes. Snapshots in another version are listed as
-    /// incompatible and never decoded.
-    public static let formatVersion = 2
+    /// Bump when newly written snapshots need an older release to identify them as newer.
+    /// `supportedVersions` keeps explicitly compatible older layouts readable.
+    public static let formatVersion = 3
+    public static let supportedVersions = 2...3
+    public static func isSupported(_ version: Int) -> Bool { supportedVersions.contains(version) }
     static let magic: [UInt8] = Array("DATR".utf8)
 
     public enum DecodeError: Error, Equatable, CustomStringConvertible {
@@ -71,7 +73,7 @@ public enum TreeCodec {
             var reader = ByteReader(buffer: buffer)
             guard try reader.bytes(4) == magic else { throw DecodeError.badMagic }
             let version = Int(try reader.u32())
-            guard version == formatVersion else { throw DecodeError.unsupportedVersion(version) }
+            guard isSupported(version) else { throw DecodeError.unsupportedVersion(version) }
             let nodeCount = Int(try reader.u32())
             let childCount = Int(try reader.u32())
             // Every node takes at least 47 bytes and every child 4: reject counts the blob cannot hold

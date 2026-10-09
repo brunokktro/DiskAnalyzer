@@ -6,6 +6,46 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-09
+
+### Added
+
+- A blocking **Plan Full Scan** decision before every new root scan and **Rescan All**. It shows
+  the root, exact time and relative age of the previous scan, estimated scope and a broad duration
+  range. A previous scan calibrates the range; a first scan uses the volume's used space and clearly
+  names item count, SSD, permissions, system load and File Provider latency as uncertainty sources.
+- Two explicit cloud modes. Both apply and verify `IOPOL_MATERIALIZE_DATALESS_FILES_OFF`, so
+  regular-file contents remain dataless. **Local files only** is the default: it detects
+  `SF_DATALESS`, skips dataless directories and gives dataless files zero logical and allocated
+  contribution. **Include cloud catalog** permits File Provider directory enumeration and includes
+  remote logical sizes while warning that provider metadata/cache usage and duration may grow.
+- Cloud placeholders have their own tree flag, icon and count instead of appearing as trustworthy
+  empty folders. Placeholder files do not consume the 5,000-row detailed-issue budget. The selected
+  cloud mode is saved with the snapshot; pre-0.3 snapshots show **Legacy, cloud behavior unknown**.
+- Thirteen cloud-mode tests, including an independent adversarial suite, cover policy
+  application/restoration, real placeholder behavior, traversal decisions, estimate scaling,
+  legacy snapshots, tree-format compatibility and SQLite round-trip. The complete suite now has
+  230 tests; the packaged-app smoke flow has 57 checks and seven opaque screenshots, including the
+  real scan-plan sheet.
+
+### Changed
+
+- Home and volume rows are navigation targets. They open the current or saved snapshot when one
+  exists and never silently start a new scan. Without a snapshot they open the scan plan.
+- Recent Scans and Current Scan show both the exact scan time and relative age. The current result
+  also shows which cloud mode produced it.
+- **Rescan This Folder** keeps the cloud mode of its parent snapshot. **Scan as New Root** uses the
+  same explicit scan plan as other full-root scans. Every new plan starts on **Local files only**,
+  even when the user selected cloud catalog for an earlier scan.
+- Tree format 3 makes older releases identify 0.3 snapshots as newer while 0.3 continues reading
+  format 2 snapshots from 0.2.
+
+### Fixed
+
+- Local-only scans no longer add remote placeholder `st_size` values to Logical totals. Dataless
+  directories are skipped before descent when a provider marks them that way, and placeholder-file
+  counts no longer crowd permission failures out of the detailed issue list.
+
 ## 0.2.0 - 2026-10-08
 
 ### Added

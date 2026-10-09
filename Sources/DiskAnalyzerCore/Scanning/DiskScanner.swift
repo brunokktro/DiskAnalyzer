@@ -69,6 +69,8 @@ private struct Walker {
     }
 
     mutating func run() throws -> ScanResult {
+        let materializationPolicy = try DatalessMaterializationPolicy.apply(options.cloudScanMode)
+        defer { materializationPolicy.restore() }
         let started = clock.now
         var rootStat = stat()
         guard stat(rootPath, &rootStat) == 0 else { throw ScanError.cannotOpen(rootPath, errno) }
@@ -170,6 +172,8 @@ private struct Walker {
 
         node.modificationTime = Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9
         if st.st_flags & UInt32(UF_HIDDEN) != 0, !isRoot { node.flags.insert(.hidden) }
+        let isDataless = CloudTraversalPolicy.isDataless(st.st_flags)
+        if isDataless { node.flags.insert(.cloudPlaceholder) }
         let allocated = Int64(st.st_blocks) * 512
 
         switch info {
@@ -179,9 +183,14 @@ private struct Walker {
             statistics.directories += 1
             entry.pointee.fts_number = Int(id)
             let isFirstVisit = seenDirectories.insert(HardLinkKey(device: st.st_dev, inode: st.st_ino)).inserted
-            if isRoot { break }
             let path = entryPath(entry)
-            if info == FTS_DC {
+            if isRoot {
+                if !CloudTraversalPolicy.shouldEnterDirectory(flags: st.st_flags, mode: options.cloudScanMode) {
+                    node.flags.insert(.excluded)
+                    fts_set(fts, entry, FTS_SKIP)
+                    record(.cloudPlaceholder, path: path, code: 0)
+                }
+            } else if info == FTS_DC {
                 node.flags.insert(.unreadable)
                 record(.cycle, path: path, code: 0)
             } else if !isFirstVisit {
@@ -197,17 +206,27 @@ private struct Walker {
                 node.flags.insert(.excluded)
                 fts_set(fts, entry, FTS_SKIP)
                 record(.excluded, path: path, code: 0)
+            } else if !CloudTraversalPolicy.shouldEnterDirectory(flags: st.st_flags, mode: options.cloudScanMode) {
+                node.flags.insert(.excluded)
+                fts_set(fts, entry, FTS_SKIP)
+                record(.cloudPlaceholder, path: path, code: 0)
             } else {
                 currentDirectory = path
             }
-            if options.detectsPackages, Self.mayBePackage(name), Self.isPackage(path) {
+            if !node.flags.contains(.excluded), options.detectsPackages, Self.mayBePackage(name), Self.isPackage(path) {
                 node.flags.insert(.package)
             }
         case FTS_F:
             node.kind = .file
             node.itemCount = 1
-            node.logicalSize = Int64(st.st_size)
-            node.allocatedSize = allocated
+            if isDataless, options.cloudScanMode != .cloudCatalog {
+                node.logicalSize = 0
+                node.allocatedSize = 0
+                recordCountOnly(.cloudPlaceholder)
+            } else {
+                node.logicalSize = Int64(st.st_size)
+                node.allocatedSize = allocated
+            }
             statistics.files += 1
             if st.st_nlink > 1 {
                 linkInodes[id] = UInt64(st.st_ino)
@@ -236,6 +255,10 @@ private struct Walker {
             runningLogical += node.logicalSize
         }
         nodes.append(node)
+    }
+
+    private mutating func recordCountOnly(_ kind: ScanIssue.Kind) {
+        issueCounts[kind, default: 0] += 1
     }
 
     private mutating func record(_ kind: ScanIssue.Kind, path: String, code: Int32) {
